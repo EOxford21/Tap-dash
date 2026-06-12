@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Tap Dash</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111827;
+      font-family: Arial, Helvetica, sans-serif;
+      touch-action: none;
+      user-select: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(#172554, #111827);
+    }
+    #hint {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 18px;
+      text-align: center;
+      color: rgba(255,255,255,.8);
+      font-size: 14px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hint">Tap left/right to move • Avoid blocks • Grab stars</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let W, H, dpr;
+function resize() {
+  dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+const state = {
+  running: false,
+  over: false,
+  score: 0,
+  best: Number(localStorage.getItem("tapDashBest") || 0),
+  speed: 3,
+  spawnTimer: 0,
+  starTimer: 0,
+  obstacles: [],
+  stars: []
+};
+
+const player = {
+  x: W / 2,
+  y: H - 110,
+  r: 22,
+  vx: 0
+};
+
+function reset() {
+  state.running = true;
+  state.over = false;
+  state.score = 0;
+  state.speed = 3;
+  state.spawnTimer = 0;
+  state.starTimer = 0;
+  state.obstacles = [];
+  state.stars = [];
+  player.x = W / 2;
+  player.y = H - 110;
+  player.vx = 0;
+}
+
+function roundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function spawnObstacle() {
+  const width = 40 + Math.random() * 80;
+  state.obstacles.push({
+    x: Math.random() * (W - width),
+    y: -60,
+    w: width,
+    h: 34 + Math.random() * 45
+  });
+}
+
+function spawnStar() {
+  state.stars.push({
+    x: 28 + Math.random() * (W - 56),
+    y: -30,
+    r: 12
+  });
+}
+
+function circleRectHit(cx, cy, cr, rx, ry, rw, rh) {
+  const closestX = Math.max(rx, Math.min(cx, rx + rw));
+  const closestY = Math.max(ry, Math.min(cy, ry + rh));
+  const dx = cx - closestX;
+  const dy = cy - closestY;
+  return dx * dx + dy * dy < cr * cr;
+}
+
+function circleCircleHit(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const rr = a.r + b.r;
+  return dx * dx + dy * dy < rr * rr;
+}
+
+function drawStar(x, y, r) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const angle = Math.PI / 5 * i - Math.PI / 2;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    ctx.lineTo(Math.cos(angle) * rad, Math.sin(angle) * rad);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#facc15";
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawText() {
+  ctx.fillStyle = "white";
+  ctx.font = "bold 26px Arial";
+  ctx.fillText(`Score: ${Math.floor(state.score)}`, 18, 42);
+  ctx.font = "16px Arial";
+  ctx.fillText(`Best: ${state.best}`, 18, 66);
+}
+
+function update() {
+  if (!state.running) return;
+
+  state.score += 0.04 * state.speed;
+  state.speed += 0.0015;
+
+  player.x += player.vx;
+  player.x = Math.max(player.r + 6, Math.min(W - player.r - 6, player.x));
+  player.y = H - 110;
+
+  state.spawnTimer--;
+  state.starTimer--;
+
+  if (state.spawnTimer <= 0) {
+    spawnObstacle();
+    state.spawnTimer = Math.max(18, 58 - state.speed * 4);
+  }
+  if (state.starTimer <= 0) {
+    spawnStar();
+    state.starTimer = 95 + Math.random() * 80;
+  }
+
+  for (const o of state.obstacles) o.y += state.speed;
+  for (const s of state.stars) s.y += state.speed * 0.85;
+
+  state.obstacles = state.obstacles.filter(o => o.y < H + 90);
+  state.stars = state.stars.filter(s => s.y < H + 50);
+
+  for (const o of state.obstacles) {
+    if (circleRectHit(player.x, player.y, player.r, o.x, o.y, o.w, o.h)) {
+      state.running = false;
+      state.over = true;
+      state.best = Math.max(state.best, Math.floor(state.score));
+      localStorage.setItem("tapDashBest", state.best);
+    }
+  }
+
+  for (let i = state.stars.length - 1; i >= 0; i--) {
+    if (circleCircleHit(player, state.stars[i])) {
+      state.score += 10;
+      state.stars.splice(i, 1);
+    }
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "#ffffff";
+  for (let i = 0; i < 28; i++) {
+    const x = (i * 83 + Math.sin(Date.now() / 1000 + i) * 20) % W;
+    const y = (i * 149 + Date.now() / 30) % H;
+    ctx.beginPath();
+    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  for (const s of state.stars) drawStar(s.x, s.y, s.r);
+
+  for (const o of state.obstacles) {
+    roundedRect(o.x, o.y, o.w, o.h, 10);
+    ctx.fillStyle = "#ef4444";
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+  ctx.fillStyle = "#38bdf8";
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "white";
+  ctx.stroke();
+
+  drawText();
+
+  if (!state.running) {
+    ctx.fillStyle = "rgba(0,0,0,.48)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "white";
+    ctx.font = "bold 42px Arial";
+    ctx.fillText(state.over ? "Game Over" : "Tap Dash", W / 2, H / 2 - 40);
+    ctx.font = "20px Arial";
+    ctx.fillText(state.over ? `Score: ${Math.floor(state.score)}` : "A tiny mobile dodging game", W / 2, H / 2);
+    ctx.font = "18px Arial";
+    ctx.fillText("Tap to start", W / 2, H / 2 + 44);
+    ctx.textAlign = "left";
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+
+function handlePointer(e) {
+  e.preventDefault();
+  if (!state.running) {
+    reset();
+    return;
+  }
+  const x = e.touches ? e.touches[0].clientX : e.clientX;
+  const dir = x < W / 2 ? -1 : 1;
+  player.vx = dir * Math.min(10, W / 36);
+}
+
+function stopPointer(e) {
+  e.preventDefault();
+  player.vx = 0;
+}
+
+canvas.addEventListener("touchstart", handlePointer, { passive: false });
+canvas.addEventListener("touchmove", handlePointer, { passive: false });
+canvas.addEventListener("touchend", stopPointer, { passive: false });
+canvas.addEventListener("mousedown", handlePointer);
+canvas.addEventListener("mouseup", stopPointer);
+canvas.addEventListener("mouseleave", stopPointer);
+
+document.addEventListener("keydown", e => {
+  if (!state.running && (e.key === " " || e.key === "Enter")) reset();
+  if (e.key === "ArrowLeft" || e.key === "a") player.vx = -8;
+  if (e.key === "ArrowRight" || e.key === "d") player.vx = 8;
+});
+document.addEventListener("keyup", () => player.vx = 0);
+</script>
+</body>
+</html>
